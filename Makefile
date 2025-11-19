@@ -2,56 +2,140 @@
 # Makefile for Windows + MinGW
 # ===============================
 CC = gcc
-CFLAGS = -I. -Isrc -Wall -Wextra -std=c11
+CFLAGS = -Wall -Wextra -std=c11
 
-SRC_DIR = src
-TEST_DIR = test
+# ===============================
+# Detect OS
+# ===============================
+ifeq ($(OS),Windows_NT)
+    RM = del /Q
+    EXE_EXT = .exe
+	MKDIR = mkdir
+else
+    RM = rm -f
+    EXE_EXT =
+    MKDIR = mkdir -p
+endif
 
-# All the .c within src directory
-SRC_FILES = $(wildcard $(SRC_DIR)/*.c)
+# ===============================
+# Source directories
+# EDIT ONLY HERE!!!!!!!!!!!
+# ===============================
+SRC_DIRS  = src
+TEST_DIRS = test
+MAIN = src/main.c
 
-# Specific files to add
-MAIN = $(SRC_DIR)/main.c
-TEST_FILES = $(wildcard $(TEST_DIR)/test_*.c)
+# ===============================
+# Windows \ → /
+# ===============================
+SRC_DIRS := $(subst \,/,$(SRC_DIRS))
+TEST_DIRS := $(subst \,/,$(TEST_DIRS))
 
+# ===============================
+# Search for all the .c inside 
+# the src directories
+# ===============================
+SRC_FILES  = $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c))
+TEST_FILES = $(foreach d,$(TEST_DIRS),$(wildcard $(d)/test_*.c))
+
+# ===============================
+# Automatic Includes
+# ===============================
+CFLAGS += $(foreach dir,$(SRC_DIRS), -I$(dir))
+CXXFLAGS += $(foreach d,$(SRC_DIRS), -I$(d))
+
+# ===============================
 # Outputs
-TARGET = main.exe
-TEST_TARGET = tests.exe
+# ===============================
+TARGET       = $(BUILD_DIR)/main$(EXE_EXT)
+TEST_TARGET  = $(BUILD_DIR)/tests$(EXE_EXT)
+
+# ===============================
+# Object files
+# ===============================
+OBJ_SRC  = $(patsubst %.c,$(OBJ_DIR)/%.o,$(SRC_FILES))
+OBJ_TEST = $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_FILES))
+
+# ===============================
+# Create directories automatically
+# ===============================
+BUILD_DIR     = build
+OBJ_DIR       = $(BUILD_DIR)/obj
+COVERAGE_DIR  = $(BUILD_DIR)/coverage
+
+# Ensure build dirs exist before compiling
+.dirs:
+	$(MKDIR) $(BUILD_DIR)
+	$(MKDIR) $(OBJ_DIR)
+	@for d in $(SRC_DIRS); do \
+		$(MKDIR) "$(OBJ_DIR)/$$d"; \
+	done
+	@for d in $(TEST_DIRS); do \
+		$(MKDIR) "$(OBJ_DIR)/$$d"; \
+	done
 
 # =================================
-# Compiling the Main application
+# Build rules
 # =================================
-all: $(TARGET)
+all: .dirs $(TARGET)
 
-$(TARGET): $(SRC_FILES)
-	$(CC) $(CFLAGS) $(SRC_FILES) -o $(TARGET)
+$(TARGET): $(OBJ_SRC)
+	$(CC) $(CFLAGS) $(OBJ_SRC) -o $(TARGET)
 	@echo ==== Compilation completed: $(TARGET) ====
 
-# =================================
-# Compiling tests (without main.c)
-# =================================
-tests: $(filter-out $(MAIN),$(SRC_FILES)) $(TEST_FILES)
-	$(CC) $(CFLAGS) $(filter-out $(MAIN),$(SRC_FILES)) $(TEST_FILES) -o $(TEST_TARGET)
-	@echo ==== Compilation completed: $(TEST_TARGET) ====
+$(OBJ_DIR)/%.o: %.c | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # =================================
-# Execute tests
+# Build tests (no main.cpp)
 # =================================
-run-tests: build-tests
+tests: .dirs $(OBJ_SRC) $(OBJ_TEST)
+	$(CC) $(CFLAGS) \
+		$(filter-out $(OBJ_DIR)/$(MAIN:.c=.o),$(OBJ_SRC)) \
+		$(OBJ_TEST) -o $(TEST_TARGET)
+	@echo ==== Tests built: $(TEST_TARGET) ====
+
+# =================================
+# Run tests
+# =================================
+run-tests: tests
 	@echo ==== Executing tests ====
-	@cd $(TEST_DIR) && test_suma.exe
+	@./$(TEST_TARGET)
+
+# ===============================
+# Valgrind (Linux only)
+# ===============================
+valgrind: tests
+	@echo ==== Running under Valgrind ====
+	valgrind --leak-check=full ./$(TEST_TARGET)
+
+# ===============================
+# Coverage (gcov + gcovr)
+# ===============================
+coverage:
+	@echo ==== Generating coverage ====
+	$(MAKE) clean
+	$(MAKE) CXXFLAGS="$(CXXFLAGS) -fprofile-arcs -ftest-coverage" tests
+	./$(TEST_TARGET)
+	gcovr --html-details --output $(COVERAGE_DIR)/coverage.html
+	@echo ==== Coverage report generated ====
 
 # =================================
-# Execute main application
+# Run main application
 # =================================
 run: $(TARGET)
-	@echo ==== Executing Application ====
+	@echo ==== Running Application ====
 	@./$(TARGET)
 
 # =================================
 # Clean everything
 # =================================
 clean:
-	@echo ==== Cleaning binnaries ====
-	@if exist "$(TARGET)" ( del /Q "$(TARGET)" )
-	@if exist "$(subst /,\\,$(TEST_TARGET))" ( del /Q "$(subst /,\\,$(TEST_TARGET))" )
+	@echo ==== Cleaning build directory ====
+	-$(RM) $(TARGET)
+	-$(RM) $(TEST_TARGET)
+	-$(RM) $(BUILD_DIR)$(PATHSEP)*.gcno
+	-$(RM) $(BUILD_DIR)$(PATHSEP)*.gcda
+	-$(RM) $(BUILD_DIR)$(PATHSEP)*.gcov
+	-$(RM) $(OBJ_DIR)$(PATHSEP)*.o
+
